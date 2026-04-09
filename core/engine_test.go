@@ -484,6 +484,19 @@ func (a *stubListAgent) ListSessions(_ context.Context) ([]AgentSessionInfo, err
 	return a.sessions, nil
 }
 
+type stubLastAgent struct {
+	stubListAgent
+	history map[string][]HistoryEntry
+	err     error
+}
+
+func (a *stubLastAgent) GetSessionHistory(_ context.Context, sessionID string, _ int) ([]HistoryEntry, error) {
+	if a.err != nil {
+		return nil, a.err
+	}
+	return a.history[sessionID], nil
+}
+
 type stubDeleteAgent struct {
 	stubListAgent
 	deleted []string
@@ -2371,6 +2384,132 @@ func TestCmdCurrent_UsesLegacyTextOnPlatformWithoutCardSupport(t *testing.T) {
 	}
 	if strings.Contains(p.sent[0], "cc-connect") {
 		t.Fatalf("current text = %q, should not be card fallback title", p.sent[0])
+	}
+}
+
+func TestCmdLast_ReturnsLatestExchange(t *testing.T) {
+	p := &stubPlatformEngine{n: "plain"}
+	older := time.Date(2026, 4, 8, 9, 0, 0, 0, time.UTC)
+	latest := time.Date(2026, 4, 9, 10, 30, 0, 0, time.UTC)
+	agent := &stubLastAgent{
+		stubListAgent: stubListAgent{sessions: []AgentSessionInfo{
+			{ID: "session-old", Summary: "Old session", ModifiedAt: older},
+			{ID: "session-new", Summary: "Latest session", ModifiedAt: latest},
+		}},
+		history: map[string][]HistoryEntry{
+			"session-old": {
+				{Role: "user", Content: "old question", Timestamp: older},
+				{Role: "assistant", Content: "old answer", Timestamp: older.Add(time.Minute)},
+			},
+			"session-new": {
+				{Role: "user", Content: "first question", Timestamp: latest.Add(-2 * time.Minute)},
+				{Role: "assistant", Content: "first answer", Timestamp: latest.Add(-time.Minute)},
+				{Role: "user", Content: "How do I continue?", Timestamp: latest},
+				{Role: "assistant", Content: "Continue from the last completed step.", Timestamp: latest.Add(time.Minute)},
+			},
+		},
+	}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+	e.sessions.SetSessionName("session-new", "Follow Up")
+	msg := &Message{SessionKey: "test:user1", ReplyCtx: "ctx", Content: "/last"}
+
+	e.handleCommand(p, msg, msg.Content)
+
+	if len(p.sent) != 1 {
+		t.Fatalf("sent messages = %d, want 1", len(p.sent))
+	}
+	got := p.sent[0]
+	if !strings.Contains(got, "Latest agent exchange") {
+		t.Fatalf("reply = %q, want header", got)
+	}
+	if !strings.Contains(got, "Follow Up") {
+		t.Fatalf("reply = %q, want custom session name", got)
+	}
+	if !strings.Contains(got, "How do I continue?") {
+		t.Fatalf("reply = %q, want latest user content", got)
+	}
+	if !strings.Contains(got, "Continue from the last completed step.") {
+		t.Fatalf("reply = %q, want latest assistant content", got)
+	}
+	if strings.Contains(got, "old answer") {
+		t.Fatalf("reply = %q, should not use older session history", got)
+	}
+}
+
+func TestCmdLast_SupportsSessionQuery(t *testing.T) {
+	p := &stubPlatformEngine{n: "plain"}
+	now := time.Date(2026, 4, 9, 12, 0, 0, 0, time.UTC)
+	agent := &stubLastAgent{
+		stubListAgent: stubListAgent{sessions: []AgentSessionInfo{
+			{ID: "session-a", Summary: "Alpha", ModifiedAt: now},
+			{ID: "session-b", Summary: "Beta", ModifiedAt: now.Add(-time.Minute)},
+		}},
+		history: map[string][]HistoryEntry{
+			"session-a": {
+				{Role: "user", Content: "alpha question", Timestamp: now},
+				{Role: "assistant", Content: "alpha answer", Timestamp: now.Add(time.Minute)},
+			},
+			"session-b": {
+				{Role: "user", Content: "beta question", Timestamp: now},
+				{Role: "assistant", Content: "beta answer", Timestamp: now.Add(time.Minute)},
+			},
+		},
+	}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+	msg := &Message{SessionKey: "test:user1", ReplyCtx: "ctx", Content: "/last 2"}
+
+	e.handleCommand(p, msg, msg.Content)
+
+	if len(p.sent) != 1 {
+		t.Fatalf("sent messages = %d, want 1", len(p.sent))
+	}
+	got := p.sent[0]
+	if !strings.Contains(got, "beta question") || !strings.Contains(got, "beta answer") {
+		t.Fatalf("reply = %q, want queried session exchange", got)
+	}
+	if strings.Contains(got, "alpha answer") {
+		t.Fatalf("reply = %q, should not use latest session when query is provided", got)
+	}
+}
+
+func TestCmdLast_HistoryProviderUnsupported(t *testing.T) {
+	p := &stubPlatformEngine{n: "plain"}
+	e := NewEngine("test", &stubListAgent{sessions: []AgentSessionInfo{{ID: "session-a", Summary: "Alpha"}}}, []Platform{p}, "", LangEnglish)
+	msg := &Message{SessionKey: "test:user1", ReplyCtx: "ctx", Content: "/last"}
+
+	e.handleCommand(p, msg, msg.Content)
+
+	if len(p.sent) != 1 {
+		t.Fatalf("sent messages = %d, want 1", len(p.sent))
+	}
+	if got := p.sent[0]; got != e.i18n.T(MsgLastNotSupported) {
+		t.Fatalf("reply = %q, want unsupported message", got)
+	}
+}
+
+func TestCmdLast_NoAssistantExchange(t *testing.T) {
+	p := &stubPlatformEngine{n: "plain"}
+	now := time.Date(2026, 4, 9, 12, 0, 0, 0, time.UTC)
+	agent := &stubLastAgent{
+		stubListAgent: stubListAgent{sessions: []AgentSessionInfo{
+			{ID: "session-a", Summary: "Alpha", ModifiedAt: now},
+		}},
+		history: map[string][]HistoryEntry{
+			"session-a": {
+				{Role: "user", Content: "question only", Timestamp: now},
+			},
+		},
+	}
+	e := NewEngine("test", agent, []Platform{p}, "", LangEnglish)
+	msg := &Message{SessionKey: "test:user1", ReplyCtx: "ctx", Content: "/last"}
+
+	e.handleCommand(p, msg, msg.Content)
+
+	if len(p.sent) != 1 {
+		t.Fatalf("sent messages = %d, want 1", len(p.sent))
+	}
+	if got := p.sent[0]; got != e.i18n.T(MsgLastEmpty) {
+		t.Fatalf("reply = %q, want empty message", got)
 	}
 }
 
