@@ -507,6 +507,9 @@ func (s *appServerSession) waitLoop() {
 	}
 
 	err := cmd.Wait()
+	if tid := s.CurrentSessionID(); tid != "" {
+		patchSessionSource(tid)
+	}
 	if s.ctx.Err() == nil && err != nil {
 		slog.Warn("codex app-server exited unexpectedly", "error", err)
 		s.emitError(fmt.Errorf("codex app-server exited: %w", err))
@@ -571,6 +574,9 @@ func (s *appServerSession) handleNotification(method string, paramsRaw json.RawM
 				SessionID: s.CurrentSessionID(),
 				Done:      true,
 			})
+			if tid := s.CurrentSessionID(); tid != "" {
+				patchSessionSource(tid)
+			}
 		}
 
 	case "error":
