@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -21,6 +23,7 @@ func listCodexSessions(workDir string) ([]core.AgentSessionInfo, error) {
 	if err != nil {
 		absWorkDir = workDir
 	}
+	filterCwd := normalizeCodexSessionPath(absWorkDir)
 
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
@@ -50,7 +53,7 @@ func listCodexSessions(workDir string) ([]core.AgentSessionInfo, error) {
 
 	var sessions []core.AgentSessionInfo
 	for _, f := range files {
-		info := parseCodexSessionFile(f, absWorkDir)
+		info := parseCodexSessionFile(f, filterCwd)
 		if info != nil {
 			patchSessionSource(info.ID)
 			sessions = append(sessions, *info)
@@ -64,8 +67,40 @@ func listCodexSessions(workDir string) ([]core.AgentSessionInfo, error) {
 	return sessions, nil
 }
 
+// normalizeCodexSessionPath canonicalizes cwd values before comparing them.
+// Windows-style paths are normalized independent of the host OS so slash-only
+// differences can be validated in Linux CI as well.
+func normalizeCodexSessionPath(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+
+	if runtime.GOOS == "windows" || looksLikeWindowsPath(raw) {
+		raw = strings.ReplaceAll(raw, `\`, `/`)
+		return strings.ToLower(path.Clean(raw))
+	}
+
+	cleaned := filepath.Clean(raw)
+	resolved, err := filepath.EvalSymlinks(cleaned)
+	if err != nil {
+		return cleaned
+	}
+	return resolved
+}
+
+func looksLikeWindowsPath(raw string) bool {
+	if len(raw) >= 2 && raw[1] == ':' {
+		c := raw[0]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
+			return true
+		}
+	}
+	return strings.HasPrefix(raw, `\\`)
+}
+
 // parseCodexSessionFile reads a Codex JSONL transcript.
-// Returns nil if the session's cwd doesn't match filterCwd.
+// Returns nil if the session's normalized cwd doesn't match filterCwd.
 func parseCodexSessionFile(path, filterCwd string) *core.AgentSessionInfo {
 	f, err := os.Open(path)
 	if err != nil {
@@ -140,7 +175,7 @@ func parseCodexSessionFile(path, filterCwd string) *core.AgentSessionInfo {
 	}
 
 	// Filter by cwd
-	if filterCwd != "" && sessionCwd != "" && sessionCwd != filterCwd {
+	if filterCwd != "" && sessionCwd != "" && normalizeCodexSessionPath(sessionCwd) != filterCwd {
 		return nil
 	}
 
