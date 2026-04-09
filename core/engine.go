@@ -2914,6 +2914,7 @@ var builtinCommands = []struct {
 	{[]string{"status"}, "status"},
 	{[]string{"usage", "quota"}, "usage"},
 	{[]string{"history"}, "history"},
+	{[]string{"last", "latest"}, "last"},
 	{[]string{"allow"}, "allow"},
 	{[]string{"model"}, "model"},
 	{[]string{"reasoning", "effort"}, "reasoning"},
@@ -3077,6 +3078,8 @@ func (e *Engine) handleCommand(p Platform, msg *Message, raw string) bool {
 		e.cmdUsage(p, msg)
 	case "history":
 		e.cmdHistory(p, msg, args)
+	case "last":
+		e.cmdLast(p, msg, args)
 	case "allow":
 		e.cmdAllow(p, msg, args)
 	case "model":
@@ -4759,6 +4762,138 @@ func (e *Engine) cmdHistory(p Platform, msg *Message, args []string) {
 	e.reply(p, msg.ReplyCtx, sb.String())
 }
 
+func (e *Engine) cmdLast(p Platform, msg *Message, args []string) {
+	agent, sessions, _, err := e.commandContext(p, msg)
+	if err != nil {
+		e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgWsResolutionError, err))
+		return
+	}
+
+	hp, ok := agent.(HistoryProvider)
+	if !ok {
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgLastNotSupported))
+		return
+	}
+
+	agentSessions, err := agent.ListSessions(e.ctx)
+	if err != nil {
+		e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgError, err))
+		return
+	}
+	if len(agentSessions) == 0 {
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgLastNoSessions))
+		return
+	}
+
+	var matched *AgentSessionInfo
+	if len(args) > 0 {
+		query := strings.TrimSpace(strings.Join(args, " "))
+		matched = e.matchSession(agentSessions, sessions, query)
+		if matched == nil {
+			e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgSwitchNoMatch), query))
+			return
+		}
+	} else {
+		matched = latestAgentSession(agentSessions)
+	}
+
+	entries, err := hp.GetSessionHistory(e.ctx, matched.ID, 100)
+	if err != nil {
+		e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgError, err))
+		return
+	}
+
+	userEntry, assistantEntry := lastHistoryExchange(entries)
+	if assistantEntry == nil {
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgLastEmpty))
+		return
+	}
+
+	displayName := e.sessionDisplayName(sessions, matched)
+	shortID := shortAgentSessionID(matched.ID)
+	sessionTitle := displayName
+	if displayName != shortID {
+		sessionTitle = fmt.Sprintf("%s (%s)", displayName, shortID)
+	}
+
+	updatedAt := matched.ModifiedAt
+	if updatedAt.IsZero() {
+		updatedAt = assistantEntry.Timestamp
+	}
+	updated := "-"
+	if !updatedAt.IsZero() {
+		updated = updatedAt.Local().Format("2006-01-02 15:04:05")
+	}
+
+	var sb strings.Builder
+	sb.WriteString(e.i18n.Tf(MsgLastHeader, sessionTitle, updated))
+	if userEntry != nil {
+		sb.WriteString("\n\n")
+		sb.WriteString(e.i18n.T(MsgLastUserLabel))
+		sb.WriteString(":\n")
+		sb.WriteString(truncateRunes(strings.TrimSpace(userEntry.Content), 1200))
+	}
+	sb.WriteString("\n\n")
+	sb.WriteString(e.i18n.T(MsgLastAssistantLabel))
+	sb.WriteString(":\n")
+	sb.WriteString(truncateRunes(strings.TrimSpace(assistantEntry.Content), 1200))
+
+	e.reply(p, msg.ReplyCtx, sb.String())
+}
+
+func latestAgentSession(sessions []AgentSessionInfo) *AgentSessionInfo {
+	if len(sessions) == 0 {
+		return nil
+	}
+	latest := 0
+	for i := 1; i < len(sessions); i++ {
+		if sessions[i].ModifiedAt.After(sessions[latest].ModifiedAt) {
+			latest = i
+		}
+	}
+	return &sessions[latest]
+}
+
+func lastHistoryExchange(entries []HistoryEntry) (*HistoryEntry, *HistoryEntry) {
+	assistantIdx := -1
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].Role == "assistant" && strings.TrimSpace(entries[i].Content) != "" {
+			assistantIdx = i
+			break
+		}
+	}
+	if assistantIdx == -1 {
+		return nil, nil
+	}
+
+	var userEntry *HistoryEntry
+	for i := assistantIdx - 1; i >= 0; i-- {
+		if entries[i].Role == "user" && strings.TrimSpace(entries[i].Content) != "" {
+			userEntry = &entries[i]
+			break
+		}
+	}
+	return userEntry, &entries[assistantIdx]
+}
+
+func truncateRunes(s string, max int) string {
+	if max <= 0 {
+		return s
+	}
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max]) + "..."
+}
+
+func shortAgentSessionID(sessionID string) string {
+	if len(sessionID) > 12 {
+		return sessionID[:12]
+	}
+	return sessionID
+}
+
 func (e *Engine) cmdLang(p Platform, msg *Message, args []string) {
 	if len(args) == 0 {
 		cur := e.i18n.CurrentLang()
@@ -4872,6 +5007,7 @@ func helpCardGroups() []helpCardGroup {
 				{command: "/switch", action: "nav:/list"},
 				{command: "/search", action: "cmd:/search"},
 				{command: "/history", action: "nav:/history"},
+				{command: "/last", action: "cmd:/last"},
 				{command: "/delete", action: "cmd:/delete"},
 				{command: "/name", action: "cmd:/name"},
 			},
@@ -6978,7 +7114,7 @@ func (e *Engine) renderDeleteModeSelectCard(sessionKey string, sessions *Session
 			btnType = "primary"
 		}
 		cb.ListItemBtn(
-			e.i18n.Tf(MsgListItem, marker, i+1, e.deleteSessionDisplayName(sessions, &s), s.MessageCount, s.ModifiedAt.Format("01-02 15:04")),
+			e.i18n.Tf(MsgListItem, marker, i+1, e.sessionDisplayName(sessions, &s), s.MessageCount, s.ModifiedAt.Format("01-02 15:04")),
 			btnText,
 			btnType,
 			action,
@@ -7034,7 +7170,7 @@ func (e *Engine) deleteModeSelectionNames(sessions *SessionManager, dm *deleteMo
 	names := make([]string, 0, len(dm.selectedIDs))
 	for i := range agentSessions {
 		if _, ok := dm.selectedIDs[agentSessions[i].ID]; ok {
-			names = append(names, "- "+e.deleteSessionDisplayName(sessions, &agentSessions[i]))
+			names = append(names, "- "+e.sessionDisplayName(sessions, &agentSessions[i]))
 		}
 	}
 	return names
@@ -9305,7 +9441,7 @@ func (e *Engine) deleteSingleSessionReply(msg *Message, deleter SessionDeleter, 
 		return e.i18n.T(MsgDeleteActiveDenied)
 	}
 
-	displayName := e.deleteSessionDisplayName(sessions, matched)
+	displayName := e.sessionDisplayName(sessions, matched)
 
 	if err := deleter.DeleteSession(e.ctx, matched.ID); err != nil {
 		return e.i18n.Tf(MsgFailedToDeleteSession, displayName, err)
@@ -9317,17 +9453,13 @@ func (e *Engine) deleteSingleSessionReply(msg *Message, deleter SessionDeleter, 
 	return fmt.Sprintf(e.i18n.T(MsgDeleteSuccess), displayName)
 }
 
-func (e *Engine) deleteSessionDisplayName(sessions *SessionManager, matched *AgentSessionInfo) string {
+func (e *Engine) sessionDisplayName(sessions *SessionManager, matched *AgentSessionInfo) string {
 	displayName := sessions.GetSessionName(matched.ID)
 	if displayName == "" {
 		displayName = matched.Summary
 	}
 	if displayName == "" {
-		shortID := matched.ID
-		if len(shortID) > 12 {
-			shortID = shortID[:12]
-		}
-		displayName = shortID
+		displayName = shortAgentSessionID(matched.ID)
 	}
 	return displayName
 }

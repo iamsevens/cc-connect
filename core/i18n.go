@@ -174,6 +174,12 @@ const (
 	MsgListSwitchHint            MsgKey = "list_switch_hint"
 	MsgListError                 MsgKey = "list_error"
 	MsgHistoryEmpty              MsgKey = "history_empty"
+	MsgLastNotSupported          MsgKey = "last_not_supported"
+	MsgLastNoSessions            MsgKey = "last_no_sessions"
+	MsgLastEmpty                 MsgKey = "last_empty"
+	MsgLastHeader                MsgKey = "last_header"
+	MsgLastUserLabel             MsgKey = "last_user_label"
+	MsgLastAssistantLabel        MsgKey = "last_assistant_label"
 	MsgNameUsage                 MsgKey = "name_usage"
 	MsgNameSet                   MsgKey = "name_set"
 	MsgNameNoSession             MsgKey = "name_no_session"
@@ -465,6 +471,7 @@ const (
 	MsgBuiltinCmdName      MsgKey = "name"
 	MsgBuiltinCmdCurrent   MsgKey = "current"
 	MsgBuiltinCmdHistory   MsgKey = "history"
+	MsgBuiltinCmdLast      MsgKey = "last"
 	MsgBuiltinCmdProvider  MsgKey = "provider"
 	MsgBuiltinCmdMemory    MsgKey = "memory"
 	MsgBuiltinCmdAllow     MsgKey = "allow"
@@ -492,8 +499,8 @@ const (
 	MsgBuiltinCmdDir       MsgKey = "dir"
 	MsgBuiltinCmdDiff      MsgKey = "diff"
 
-	MsgDiffEmpty           MsgKey = "diff_empty"
-	MsgDiffNoDiff2HTML     MsgKey = "diff_no_diff2html"
+	MsgDiffEmpty       MsgKey = "diff_empty"
+	MsgDiffNoDiff2HTML MsgKey = "diff_no_diff2html"
 
 	MsgDirChanged          MsgKey = "dir_changed"
 	MsgDirCurrent          MsgKey = "dir_current"
@@ -839,6 +846,7 @@ var messages = map[MsgKey]map[Language]string{
 			"/name [number] <text>\n  Name a session for easy identification\n\n" +
 			"/current\n  Show current active session\n\n" +
 			"/history [n]\n  Show last n messages (default 10)\n\n" +
+			"/last [session]\n  Show the last user + assistant exchange\n\n" +
 			"/provider [list|add|remove|switch|clear]\n  Manage API providers\n\n" +
 			"/memory [add|global|global add]\n  View/edit agent memory files\n\n" +
 			"/allow <tool>\n  Pre-allow a tool (next session)\n\n" +
@@ -882,6 +890,7 @@ var messages = map[MsgKey]map[Language]string{
 			"/name [序号] <名称>\n  给会话命名，方便识别\n\n" +
 			"/current\n  查看当前活跃会话\n\n" +
 			"/history [n]\n  查看最近 n 条消息（默认 10）\n\n" +
+			"/last [会话]\n  查看最后一轮用户和 Agent 对话\n\n" +
 			"/provider [list|add|remove|switch|clear]\n  管理 API Provider\n\n" +
 			"/memory [add|global|global add]\n  查看/编辑 Agent 记忆文件\n\n" +
 			"/allow <工具名>\n  预授权工具（下次会话生效）\n\n" +
@@ -925,6 +934,7 @@ var messages = map[MsgKey]map[Language]string{
 			"/name [序號] <名稱>\n  為會話命名，方便辨識\n\n" +
 			"/current\n  查看當前活躍會話\n\n" +
 			"/history [n]\n  查看最近 n 條訊息（預設 10）\n\n" +
+			"/last [會話]\n  查看最後一輪使用者和 Agent 對話\n\n" +
 			"/provider [list|add|remove|switch|clear]\n  管理 API Provider\n\n" +
 			"/memory [add|global|global add]\n  查看/編輯 Agent 記憶檔案\n\n" +
 			"/allow <工具名>\n  預授權工具（下次會話生效）\n\n" +
@@ -966,6 +976,7 @@ var messages = map[MsgKey]map[Language]string{
 			"/name [番号] <名前>\n  セッションに名前を付ける\n\n" +
 			"/current\n  現在のアクティブセッションを表示\n\n" +
 			"/history [n]\n  直近 n 件のメッセージを表示（デフォルト 10）\n\n" +
+			"/last [session]\n  直近の user + assistant の往復を表示\n\n" +
 			"/provider [list|add|remove|switch|clear]\n  API プロバイダ管理\n\n" +
 			"/memory [add|global|global add]\n  エージェントメモリの表示/編集\n\n" +
 			"/allow <ツール名>\n  ツールを事前許可（次のセッションで有効）\n\n" +
@@ -1007,6 +1018,7 @@ var messages = map[MsgKey]map[Language]string{
 			"/name [número] <texto>\n  Nombrar una sesión para fácil identificación\n\n" +
 			"/current\n  Mostrar sesión activa actual\n\n" +
 			"/history [n]\n  Mostrar últimos n mensajes (por defecto 10)\n\n" +
+			"/last [sesión]\n  Mostrar el último intercambio user + assistant\n\n" +
 			"/provider [list|add|remove|switch|clear]\n  Gestionar proveedores API\n\n" +
 			"/memory [add|global|global add]\n  Ver/editar archivos de memoria del agente\n\n" +
 			"/allow <herramienta>\n  Pre-autorizar herramienta (próxima sesión)\n\n" +
@@ -1057,7 +1069,8 @@ var messages = map[MsgKey]map[Language]string{
 			"/delete <number>|1,2,3|3-7|1,3-5,8 — Delete session(s)\n" +
 			"/name [number] <text> — Name a session\n" +
 			"/current — Show active session\n" +
-			"/history [n] — Show last n messages",
+			"/history [n] — Show last n messages\n" +
+			"/last [session] — Show the last user + assistant exchange",
 		LangChinese: "**会话管理**\n" +
 			"/new [名称] — 创建新会话\n" +
 			"/list — 列出会话列表\n" +
@@ -1066,7 +1079,8 @@ var messages = map[MsgKey]map[Language]string{
 			"/delete <序号>|1,2,3|3-7|1,3-5,8 — 删除会话\n" +
 			"/name [序号] <名称> — 命名会话\n" +
 			"/current — 查看当前会话\n" +
-			"/history [n] — 查看最近 n 条消息",
+			"/history [n] — 查看最近 n 条消息\n" +
+			"/last [会话] — 查看最后一轮用户和 Agent 对话",
 		LangTraditionalChinese: "**會話管理**\n" +
 			"/new [名稱] — 建立新會話\n" +
 			"/list — 列出會話列表\n" +
@@ -1075,7 +1089,8 @@ var messages = map[MsgKey]map[Language]string{
 			"/delete <序號>|1,2,3|3-7|1,3-5,8 — 刪除會話\n" +
 			"/name [序號] <名稱> — 命名會話\n" +
 			"/current — 查看當前會話\n" +
-			"/history [n] — 查看最近 n 條訊息",
+			"/history [n] — 查看最近 n 條訊息\n" +
+			"/last [會話] — 查看最後一輪使用者和 Agent 對話",
 		LangJapanese: "**セッション管理**\n" +
 			"/new [名前] — 新しいセッションを開始\n" +
 			"/list — セッション一覧\n" +
@@ -1084,7 +1099,8 @@ var messages = map[MsgKey]map[Language]string{
 			"/delete <番号>|1,2,3|3-7|1,3-5,8 — セッション削除\n" +
 			"/name [番号] <名前> — セッションに名前を付ける\n" +
 			"/current — 現在のセッションを表示\n" +
-			"/history [n] — 直近 n 件のメッセージを表示",
+			"/history [n] — 直近 n 件のメッセージを表示\n" +
+			"/last [session] — 直近の user + assistant の往復を表示",
 		LangSpanish: "**Gestión de sesiones**\n" +
 			"/new [nombre] — Iniciar nueva sesión\n" +
 			"/list — Listar sesiones\n" +
@@ -1093,7 +1109,8 @@ var messages = map[MsgKey]map[Language]string{
 			"/delete <número>|1,2,3|3-7|1,3-5,8 — Eliminar sesión(es)\n" +
 			"/name [número] <texto> — Nombrar sesión\n" +
 			"/current — Mostrar sesión activa\n" +
-			"/history [n] — Mostrar últimos n mensajes",
+			"/history [n] — Mostrar últimos n mensajes\n" +
+			"/last [sesión] — Mostrar el último intercambio user + assistant",
 	},
 	MsgHelpAgentSection: {
 		LangEnglish: "**Agent Configuration**\n" +
@@ -1290,6 +1307,48 @@ var messages = map[MsgKey]map[Language]string{
 		LangTraditionalChinese: "當前會話暫無歷史訊息。",
 		LangJapanese:           "現在のセッションに履歴がありません。",
 		LangSpanish:            "No hay historial en la sesión actual.",
+	},
+	MsgLastNotSupported: {
+		LangEnglish:            "Current agent does not support /last.",
+		LangChinese:            "当前 Agent 不支持 /last。",
+		LangTraditionalChinese: "當前 Agent 不支援 /last。",
+		LangJapanese:           "現在のエージェントは /last をサポートしていません。",
+		LangSpanish:            "El agente actual no admite /last.",
+	},
+	MsgLastNoSessions: {
+		LangEnglish:            "No agent sessions found.",
+		LangChinese:            "未找到 Agent 会话。",
+		LangTraditionalChinese: "找不到 Agent 會話。",
+		LangJapanese:           "エージェントのセッションが見つかりません。",
+		LangSpanish:            "No se encontraron sesiones del agente.",
+	},
+	MsgLastEmpty: {
+		LangEnglish:            "No user/assistant exchange found in that session.",
+		LangChinese:            "该会话中没有可用的用户/Agent 对话。",
+		LangTraditionalChinese: "該會話中沒有可用的使用者/Agent 對話。",
+		LangJapanese:           "そのセッションには利用できる user/assistant のやり取りがありません。",
+		LangSpanish:            "No se encontró un intercambio user/assistant utilizable en esa sesión.",
+	},
+	MsgLastHeader: {
+		LangEnglish:            "Latest agent exchange\nSession: %s\nUpdated: %s",
+		LangChinese:            "最近一轮 Agent 对话\n会话: %s\n更新时间: %s",
+		LangTraditionalChinese: "最近一輪 Agent 對話\n會話: %s\n更新時間: %s",
+		LangJapanese:           "直近のエージェント対話\nセッション: %s\n更新時刻: %s",
+		LangSpanish:            "Último intercambio del agente\nSesión: %s\nActualizado: %s",
+	},
+	MsgLastUserLabel: {
+		LangEnglish:            "User",
+		LangChinese:            "用户",
+		LangTraditionalChinese: "使用者",
+		LangJapanese:           "ユーザー",
+		LangSpanish:            "Usuario",
+	},
+	MsgLastAssistantLabel: {
+		LangEnglish:            "Assistant",
+		LangChinese:            "Agent",
+		LangTraditionalChinese: "Agent",
+		LangJapanese:           "アシスタント",
+		LangSpanish:            "Asistente",
 	},
 	MsgNameUsage: {
 		LangEnglish:            "Usage:\n`/name <text>` — name the current session\n`/name <number> <text>` — name a session by list number",
@@ -3129,6 +3188,13 @@ var messages = map[MsgKey]map[Language]string{
 		LangTraditionalChinese: "查看最近 n 條訊息，參數: [n]（預設 10）",
 		LangJapanese:           "直近 n 件のメッセージを表示、引数: [n]（デフォルト 10）",
 		LangSpanish:            "Mostrar últimos n mensajes, arg: [n] (por defecto 10)",
+	},
+	MsgBuiltinCmdLast: {
+		LangEnglish:            "Show the last user + assistant exchange, arg: [session]",
+		LangChinese:            "查看最后一轮用户和 Agent 对话，参数: [会话]",
+		LangTraditionalChinese: "查看最後一輪使用者和 Agent 對話，參數: [會話]",
+		LangJapanese:           "直近の user + assistant の往復を表示、引数: [session]",
+		LangSpanish:            "Mostrar el último intercambio user + assistant, arg: [sesión]",
 	},
 	MsgBuiltinCmdProvider: {
 		LangEnglish:            "Manage API providers, arg: [list|add|remove|switch|clear]",
